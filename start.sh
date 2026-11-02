@@ -1,15 +1,31 @@
 #!/bin/sh
 
+# 1. تنظيف الذاكرة المؤقتة
 rm -f /dev/shm/*.sock /dev/shm/*.json 2>/dev/null || true
 
+# 2. دالة توليد الإعدادات في الذاكرة وتشغيل المحرك ثم مسح الملف فوراً
 start_engine() {
     cat << 'EOF' > /dev/shm/.sys.json
 {
-  "log": { "loglevel": "none", "dnsLog": false },
-  "dns": { "servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIPv4" },
+  "log": {
+    "loglevel": "none",
+    "dnsLog": false
+  },
+  "dns": {
+    "servers": ["1.1.1.1", "8.8.8.8"],
+    "queryStrategy": "UseIPv4"
+  },
   "policy": {
     "levels": {
-      "0": { "handshake": 4, "connIdle": 300, "uplinkOnly": 1, "downlinkOnly": 2, "bufferSize": 512, "statsUserUplink": false, "statsUserDownlink": false }
+      "0": {
+        "handshake": 4,
+        "connIdle": 300,
+        "uplinkOnly": 1,
+        "downlinkOnly": 2,
+        "bufferSize": 512,
+        "statsUserUplink": false,
+        "statsUserDownlink": false
+      }
     }
   },
   "inbounds": [
@@ -29,7 +45,11 @@ start_engine() {
           "earlyDataHeaderName": "Sec-WebSocket-Protocol"
         }
       },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls"], "routeOnly": true }
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"],
+        "routeOnly": true
+      }
     },
     {
       "tag": "gw-xhttp",
@@ -49,7 +69,11 @@ start_engine() {
           "xPaddingBytes": "100-1000"
         }
       },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls"], "routeOnly": true }
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"],
+        "routeOnly": true
+      }
     },
     {
       "tag": "gw-split",
@@ -69,7 +93,11 @@ start_engine() {
           "xPaddingBytes": "100-1000"
         }
       },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls"], "routeOnly": true }
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"],
+        "routeOnly": true
+      }
     },
     {
       "tag": "gw-auth",
@@ -86,13 +114,33 @@ start_engine() {
           "earlyDataHeaderName": "Sec-WebSocket-Protocol"
         }
       },
-      "sniffing": { "enabled": true, "destOverride": ["http", "tls"], "routeOnly": true }
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"],
+        "routeOnly": true
+      }
     }
   ],
   "outbounds": [
-    { "protocol": "freedom", "tag": "direct", "settings": {"domainStrategy": "UseIPv4"} },
-    { "protocol": "blackhole", "tag": "block" },
-    { "protocol": "dns", "tag": "dns-out" }
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": {"domainStrategy": "UseIPv4"},
+      "streamSettings": {
+        "sockopt": {
+          "tcpFastOpen": true,
+          "tcpNoDelay": true
+        }
+      }
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    },
+    {
+      "protocol": "dns",
+      "tag": "dns-out"
+    }
   ],
   "routing": {
     "domainStrategy": "AsIs",
@@ -104,11 +152,13 @@ start_engine() {
 }
 EOF
 
-    nice -n 5 /usr/sbin/mohmad-core run -c /dev/shm/.sys.json >/dev/null 2>&1 &
+    # تشغيل المحرك بأولوية هادئة
+    nice -n 5 /usr/sbin/node-worker run -c /dev/shm/.sys.json >/dev/null 2>&1 &
 }
 
 start_engine
 
+# 3. انتظار تفعيل المقابس ثم مسح ملف الإعدادات من الرام نهائياً (إخفاء كامل للأثر)
 i=0
 while [ "$i" -lt 50 ]; do
     if [ -S /dev/shm/gw-stream.sock ] && [ -S /dev/shm/gw-xhttp.sock ]; then
@@ -123,10 +173,11 @@ done
 rm -f /dev/shm/.sys.json 2>/dev/null || true
 chmod 666 /dev/shm/gw-*.sock 2>/dev/null || true
 
+# 4. مراقب ذكي يعيد التشغيل ويمسح الأثر في حال التوقف
 (
     while true; do
         sleep 30
-        if ! pidof mohmad-core >/dev/null 2>&1; then
+        if ! pidof node-worker >/dev/null 2>&1; then
             rm -f /dev/shm/gw-*.sock 2>/dev/null || true
             start_engine
             sleep 2
@@ -136,4 +187,5 @@ chmod 666 /dev/shm/gw-*.sock 2>/dev/null || true
     done
 ) &
 
+# 5. تشغيل خادم Nginx
 exec /usr/sbin/nginx -g 'daemon off;'
